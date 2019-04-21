@@ -18,63 +18,65 @@
 
 static void cleanup_crypto(void);
 static void crt_to_pem(X509 *crt, uint8_t **crt_bytes, size_t *crt_size);
+static void req_to_pem(X509_REQ *req, uint8_t **req_bytes, size_t *req_size); // add 证书请求=>pem
 static int generate_key_csr(EVP_PKEY **key, X509_REQ **req);
 static int generate_set_random_serial(X509 *crt);
-static int generate_signed_key_pair(EVP_PKEY *ca_key, X509 *ca_crt, EVP_PKEY **key, X509 **crt);
+static int generate_signed_key_pair(EVP_PKEY **key, X509 **crt);
 static void initialize_crypto(void);
 static void key_to_pem(EVP_PKEY *key, uint8_t **key_bytes, size_t *key_size);
 static int load_ca(const char *ca_key_path, EVP_PKEY **ca_key, const char *ca_crt_path, X509 **ca_crt);
 static void print_bytes(uint8_t *data, size_t size);
+static void write_bytes(const char *path, uint8_t *data, size_t size);
 
 int main(int argc, char **argv)
 {
-	/* Assumes the CA certificate and CA key is given as arguments. */
-	if (argc != 3) {
-		fprintf(stderr, "usage: %s <cakey> <cacert>\n", argv[0]);
-		return 1;
-	}
+	// /* Assumes the CA certificate and CA key is given as arguments. */
+	// if (argc != 3) {
+	// 	fprintf(stderr, "usage: %s <cakey> <cacert>\n", argv[0]);
+	// 	return 1;
+	// }
 
-	char *ca_key_path = argv[1];
-	char *ca_crt_path = argv[2];
+	// char *ca_key_path = argv[1];
+	// char *ca_crt_path = argv[2];
 
-	/* Load CA key and cert. */
-	initialize_crypto();
-	EVP_PKEY *ca_key = NULL;
-	X509 *ca_crt = NULL;
-	if (!load_ca(ca_key_path, &ca_key, ca_crt_path, &ca_crt)) {
-		fprintf(stderr, "Failed to load CA certificate and/or key!\n");
-		return 1;
-	}
+	// /* Load CA key and cert. */
+	// initialize_crypto();
+	// EVP_PKEY *ca_key = NULL;
+	// X509 *ca_crt = NULL;
+	// if (!load_ca(ca_key_path, &ca_key, ca_crt_path, &ca_crt)) {
+	// 	fprintf(stderr, "Failed to load CA certificate and/or key!\n");
+	// 	return 1;
+	// }
 
 	/* Generate keypair and then print it byte-by-byte for demo purposes. */
 	EVP_PKEY *key = NULL;
 	X509 *crt = NULL;
 
-	int ret = generate_signed_key_pair(ca_key, ca_crt, &key, &crt);
+	int ret = generate_signed_key_pair(&key, &crt);
 	if (!ret) {
 		fprintf(stderr, "Failed to generate key pair!\n");
 		return 1;
 	}
-	/* Convert key and certificate to PEM format. */
-	uint8_t *key_bytes = NULL;
-	uint8_t *crt_bytes = NULL;
-	size_t key_size = 0;
-	size_t crt_size = 0;
+	// /* Convert key and certificate to PEM format. */
+	// uint8_t *key_bytes = NULL;
+	// uint8_t *crt_bytes = NULL;
+	// size_t key_size = 0;
+	// size_t crt_size = 0;
 
-	key_to_pem(key, &key_bytes, &key_size);
-	crt_to_pem(crt, &crt_bytes, &crt_size);
+	// key_to_pem(key, &key_bytes, &key_size);
+	// crt_to_pem(crt, &crt_bytes, &crt_size);
 
-	/* Print key and certificate. */
-	print_bytes(key_bytes, key_size);
-	print_bytes(crt_bytes, crt_size);
+	// /* Print key and certificate. */
+	// print_bytes(key_bytes, key_size);
+	// print_bytes(crt_bytes, crt_size);
 
-	/* Free stuff. */
-	EVP_PKEY_free(ca_key);
-	EVP_PKEY_free(key);
-	X509_free(ca_crt);
-	X509_free(crt);
-	free(key_bytes);
-	free(crt_bytes);
+	// /* Free stuff. */
+	// EVP_PKEY_free(ca_key);
+	// EVP_PKEY_free(key);
+	// X509_free(ca_crt);
+	// X509_free(crt);
+	// free(key_bytes);
+	// free(crt_bytes);
 
 	cleanup_crypto();
 
@@ -100,7 +102,18 @@ void crt_to_pem(X509 *crt, uint8_t **crt_bytes, size_t *crt_size)
 	BIO_free_all(bio);
 }
 
-int generate_signed_key_pair(EVP_PKEY *ca_key, X509 *ca_crt, EVP_PKEY **key, X509 **crt)
+void req_to_pem(X509_REQ *req, uint8_t **req_bytes, size_t *req_size)
+{
+	/* Convert signed certificate to PEM format. */
+	BIO *bio = BIO_new(BIO_s_mem());
+	PEM_write_bio_X509_REQ(bio, req);
+	*req_size = BIO_pending(bio);
+	*req_bytes = (uint8_t *)malloc(*req_size + 1);
+	BIO_read(bio, *req_bytes, *req_size);
+	BIO_free_all(bio);
+}
+
+int generate_signed_key_pair(EVP_PKEY **key, X509 **crt)
 {
 	/* Generate the private key and corresponding CSR. */
 	X509_REQ *req = NULL;
@@ -109,39 +122,47 @@ int generate_signed_key_pair(EVP_PKEY *ca_key, X509 *ca_crt, EVP_PKEY **key, X50
 		return 0;
 	}
 
-	/* Sign with the CA. */
-	*crt = X509_new();
-	if (!*crt) goto err;
+	/* Convert req to PEM format. */
+	uint8_t *req_bytes = NULL;
+	size_t req_size = 0;
 
-	X509_set_version(*crt, 2); /* Set version to X509v3 */
-
-	/* Generate random 20 byte serial. */
-	if (!generate_set_random_serial(*crt)) goto err;
-
-	/* Set issuer to CA's subject. */
-	X509_set_issuer_name(*crt, X509_get_subject_name(ca_crt));
-
-	/* Set validity of certificate to 2 years. */
-	X509_gmtime_adj(X509_get_notBefore(*crt), 0);
-	X509_gmtime_adj(X509_get_notAfter(*crt), (long)2*365*3600);
-
-	/* Get the request's subject and just use it (we don't bother checking it since we generated
-	 * it ourself). Also take the request's public key. */
-	X509_set_subject_name(*crt, X509_REQ_get_subject_name(req));
-	EVP_PKEY *req_pubkey = X509_REQ_get_pubkey(req);
-	X509_set_pubkey(*crt, req_pubkey);
-	EVP_PKEY_free(req_pubkey);
-
-	/* Now perform the actual signing with the CA. */
-	if (X509_sign(*crt, ca_key, EVP_sha256()) == 0) goto err;
-
-	X509_REQ_free(req);
+	req_to_pem(req, &req_bytes, &req_size);
+	char *csr_path = "app.csr";
+	write_bytes(csr_path, req_bytes, req_size);
 	return 1;
-err:
-	EVP_PKEY_free(*key);
-	X509_REQ_free(req);
-	X509_free(*crt);
-	return 0;
+// 	/* Sign with the CA. */
+// 	*crt = X509_new();
+// 	if (!*crt) goto err;
+
+// 	X509_set_version(*crt, 2); /* Set version to X509v3 */
+
+// 	/* Generate random 20 byte serial. */
+// 	if (!generate_set_random_serial(*crt)) goto err;
+
+// 	/* Set issuer to CA's subject. */
+// 	X509_set_issuer_name(*crt, X509_get_subject_name(ca_crt));
+
+// 	/* Set validity of certificate to 2 years. */
+// 	X509_gmtime_adj(X509_get_notBefore(*crt), 0);
+// 	X509_gmtime_adj(X509_get_notAfter(*crt), (long)2*365*3600);
+
+// 	/* Get the request's subject and just use it (we don't bother checking it since we generated
+// 	 * it ourself). Also take the request's public key. */
+// 	X509_set_subject_name(*crt, X509_REQ_get_subject_name(req));
+// 	EVP_PKEY *req_pubkey = X509_REQ_get_pubkey(req);
+// 	X509_set_pubkey(*crt, req_pubkey);
+// 	EVP_PKEY_free(req_pubkey);
+
+// 	/* Now perform the actual signing with the CA. */
+// 	if (X509_sign(*crt, ca_key, EVP_sha256()) == 0) goto err;
+
+// 	X509_REQ_free(req);
+// 	return 1;
+// err:
+// 	EVP_PKEY_free(*key);
+// 	X509_REQ_free(req);
+// 	X509_free(*crt);
+// 	return 0;
 }
 
 int generate_key_csr(EVP_PKEY **key, X509_REQ **req)
@@ -244,6 +265,19 @@ void print_bytes(uint8_t *data, size_t size)
 {
 	for (size_t i = 0; i < size; i++) {
 		printf("%c", data[i]);
+	}
+}
+
+void write_bytes(const char *path, uint8_t *data, size_t size)
+{
+    FILE *fp;
+    if((fp=fopen(path,"a"))==NULL)
+        printf("file cannot open \n");
+    else
+        printf("file opened for writing \n");
+	for (size_t i = 0; i < size; i++) {
+		printf("%c", data[i]);
+		fputc(data[i],fp); //输入到文件中
 	}
 }
 
