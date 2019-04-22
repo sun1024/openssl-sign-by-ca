@@ -1,6 +1,15 @@
 #include <stdint.h>
 #include <stdio.h>
+#include<unistd.h>
+#include<stdlib.h>
+#include<sys/types.h>
+#include<sys/socket.h>
+#include<netinet/in.h>
+#include<netdb.h>
+#include<string.h>
+#include<errno.h>
 
+int count = 1;
 #include <openssl/err.h>
 #include <openssl/conf.h>
 #include <openssl/pem.h>
@@ -15,13 +24,14 @@
 #define REQ_DN_O "Example Company"
 #define REQ_DN_OU ""
 #define REQ_DN_CN "VNF Application"
+#define PORT 2345
 
 static void cleanup_crypto(void);
 static void crt_to_pem(X509 *crt, uint8_t **crt_bytes, size_t *crt_size);
 static void req_to_pem(X509_REQ *req, uint8_t **req_bytes, size_t *req_size); // add 证书请求=>pem
 static int generate_key_csr(EVP_PKEY **key, X509_REQ **req);
 static int generate_set_random_serial(X509 *crt);
-static int generate_signed_key_pair(EVP_PKEY **key, X509 **crt);
+static int generate_signed_key_pair(EVP_PKEY **key, X509_REQ **req, X509 **crt);
 static void initialize_crypto(void);
 static void key_to_pem(EVP_PKEY *key, uint8_t **key_bytes, size_t *key_size);
 static int load_ca(const char *ca_key_path, EVP_PKEY **ca_key, const char *ca_crt_path, X509 **ca_crt);
@@ -50,13 +60,66 @@ int main(int argc, char **argv)
 
 	/* Generate keypair and then print it byte-by-byte for demo purposes. */
 	EVP_PKEY *key = NULL;
+	X509_REQ *req = NULL;
 	X509 *crt = NULL;
 
-	int ret = generate_signed_key_pair(&key, &crt);
+	int ret = generate_signed_key_pair(&key, &req, &crt);
 	if (!ret) {
 		fprintf(stderr, "Failed to generate key pair!\n");
 		return 1;
 	}
+	
+	/* Convert req to PEM format. */
+	// 将private key 和 csr 写入文件
+	uint8_t *req_bytes = NULL;
+	size_t req_size = 0;
+	uint8_t *key_bytes = NULL;
+	size_t key_size = 0;
+	req_to_pem(req, &req_bytes, &req_size);
+	char *csr_path = "app.csr";
+	write_bytes(csr_path, req_bytes, req_size);
+	key_to_pem(key, &key_bytes, &key_size);
+	char *key_path = "app.key";
+	write_bytes(key_path, key_bytes, key_size);
+
+	//socket 过程
+	int sockfd;	
+	char buffer[2014];
+	struct sockaddr_in server_addr;
+	struct hostent *host;
+	int nbytes;
+	if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) == -1)
+	{
+		fprintf(stderr, "Socket Error is %s\n", strerror(errno));
+		exit(EXIT_FAILURE);
+	}
+	bzero(&server_addr, sizeof(server_addr));
+	server_addr.sin_family = AF_INET;
+	server_addr.sin_port = htons(PORT);
+	server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+	//客户端发出请求
+	if (connect(sockfd, (struct sockaddr *)(&server_addr), sizeof(struct sockaddr)) == -1)
+	{
+		fprintf(stderr, "Connect failed\n");
+		exit(EXIT_FAILURE);
+	}
+	puts("发起请求");
+	//接收公钥
+	char recvbuf[2048];	
+	recv(sockfd, recvbuf, sizeof(recvbuf), 0);
+	printf("收到公钥：%s", recvbuf);
+	//发送证书请求
+	char sendbuf[2048];
+	strcpy(sendbuf, req_bytes);
+	send(sockfd, sendbuf, strlen(sendbuf), 0);
+	//收到签名证书
+	//char recvbuf[2048];	
+	recv(sockfd, recvbuf, sizeof(recvbuf), 0);
+	printf("收到签名：%s", recvbuf);
+
+	close(sockfd);
+	exit(EXIT_SUCCESS);
+	
 	// /* Convert key and certificate to PEM format. */
 	// uint8_t *key_bytes = NULL;
 	// uint8_t *crt_bytes = NULL;
@@ -113,22 +176,28 @@ void req_to_pem(X509_REQ *req, uint8_t **req_bytes, size_t *req_size)
 	BIO_free_all(bio);
 }
 
-int generate_signed_key_pair(EVP_PKEY **key, X509 **crt)
+int generate_signed_key_pair(EVP_PKEY **key, X509_REQ **req, X509 **crt)
 {
 	/* Generate the private key and corresponding CSR. */
-	X509_REQ *req = NULL;
-	if (!generate_key_csr(key, &req)) {
+	// X509_REQ *req = NULL;
+	if (!generate_key_csr(key, req)) {
 		fprintf(stderr, "Failed to generate key and/or CSR!\n");
 		return 0;
 	}
 
-	/* Convert req to PEM format. */
-	uint8_t *req_bytes = NULL;
-	size_t req_size = 0;
-
-	req_to_pem(req, &req_bytes, &req_size);
-	char *csr_path = "app.csr";
-	write_bytes(csr_path, req_bytes, req_size);
+	// /* Convert req to PEM format. */
+	// // 将private key 和 csr 写入文件
+	// uint8_t *req_bytes = NULL;
+	// size_t req_size = 0;
+	// uint8_t *key_bytes = NULL;
+	// size_t key_size = 0;
+	// req_to_pem(*req, &req_bytes, &req_size);
+	// char *csr_path = "app.csr";
+	// write_bytes(csr_path, req_bytes, req_size);
+	// key_to_pem(*key, &key_bytes, &key_size);
+	// char *key_path = "app.key";
+	// write_bytes(key_path, key_bytes, key_size);
+	
 	return 1;
 // 	/* Sign with the CA. */
 // 	*crt = X509_new();
@@ -273,10 +342,10 @@ void write_bytes(const char *path, uint8_t *data, size_t size)
     FILE *fp;
     if((fp=fopen(path,"a"))==NULL)
         printf("file cannot open \n");
-    else
-        printf("file opened for writing \n");
+    // else
+    //     printf("file opened for writing \n");
 	for (size_t i = 0; i < size; i++) {
-		printf("%c", data[i]);
+		// printf("%c", data[i]);
 		fputc(data[i],fp); //输入到文件中
 	}
 }
