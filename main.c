@@ -105,8 +105,14 @@ int main(int argc, char **argv)
 	//printf("new socket id is %d\n", newsockfd);
 	//printf("Accept clent ip is %s\n", inet_ntoa(client_addr.sin_addr));
 
-	//发送公钥
-	char sendfirstbuf[] = "公钥\n";
+	//发送公钥(ca_crt)
+	uint8_t *ca_crt_bytes = NULL;
+	size_t ca_crt_size = 0;
+	crt_to_pem(ca_crt, &ca_crt_bytes, &ca_crt_size);
+	print_bytes(ca_crt_bytes, ca_crt_size);
+
+	char sendfirstbuf[2048];
+	strcpy(sendfirstbuf, ca_crt_bytes);
 	send(newsockfd, sendfirstbuf, strlen(sendfirstbuf), 0);
 	//接收证书请求
 	char recvbuf[2048];	
@@ -116,8 +122,8 @@ int main(int argc, char **argv)
     if((fp=fopen("app.csr","w"))==NULL)
         printf("file cannot open \n");
 	fputs(recvbuf, fp);
-	printf("收到证书请求：%s", recvbuf);
 	fclose(fp);
+	printf("收到证书请求：%s", recvbuf);
 	//读取app.csr 得到X509_REQ
 	X509_REQ *req = NULL;
 	const char *x509ReqFile = "app.csr";
