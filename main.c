@@ -115,6 +115,12 @@ int main(int argc, char **argv)
 	//收到签名证书
 	//char recvbuf[2048];	
 	recv(sockfd, recvbuf, sizeof(recvbuf), 0);
+	//crt 写入文件
+	FILE *fp;
+    if((fp=fopen("app.crt","w"))==NULL)
+        printf("file cannot open \n");
+	fputs(recvbuf, fp);
+	fclose(fp);
 	printf("收到签名：%s", recvbuf);
 
 	close(sockfd);
