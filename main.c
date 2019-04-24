@@ -34,9 +34,11 @@ static int generate_set_random_serial(X509 *crt);
 static int generate_signed_key_pair(EVP_PKEY **key, X509_REQ **req, X509 **crt);
 static void initialize_crypto(void);
 static void key_to_pem(EVP_PKEY *key, uint8_t **key_bytes, size_t *key_size);
-static int load_ca(const char *ca_key_path, EVP_PKEY **ca_key, const char *ca_crt_path, X509 **ca_crt);
+static int load_ca(const char *ca_crt_path, X509 **ca_crt);
 static void print_bytes(uint8_t *data, size_t size);
 static void write_bytes(const char *path, uint8_t *data, size_t size);
+static char *my_encrypt(char *str,char *path_key);
+static char *my_decrypt(char *str,char *path_key);
 
 int main(int argc, char **argv)
 {
@@ -50,7 +52,7 @@ int main(int argc, char **argv)
 	// char *ca_crt_path = argv[2];
 
 	// /* Load CA key and cert. */
-	// initialize_crypto();
+	initialize_crypto();
 	// EVP_PKEY *ca_key = NULL;
 	// X509 *ca_crt = NULL;
 	// if (!load_ca(ca_key_path, &ca_key, ca_crt_path, &ca_crt)) {
@@ -107,21 +109,32 @@ int main(int argc, char **argv)
 	//接收公钥
 	char recvbuf[2048];	
 	recv(sockfd, recvbuf, sizeof(recvbuf), 0);
-	printf("收到公钥：%s", recvbuf);
+	//ca_pub 写入文件
+	FILE *fp_ca;
+    if((fp_ca=fopen("pubca.key","w"))==NULL)
+        printf("file cannot open \n");
+	fputs(recvbuf, fp_ca);
+	fclose(fp_ca);
+	printf("收到CA公钥：%s", recvbuf);
+
+	//对csr进行加密
+	char *ca_pubkey = "pubca.key";
+	char *encode_csr;
+	encode_csr = my_encrypt(req_bytes, ca_pubkey);
 	//发送证书请求
 	char sendbuf[2048];
 	strcpy(sendbuf, req_bytes);
 	send(sockfd, sendbuf, strlen(sendbuf), 0);
 	//收到签名证书
-	//char recvbuf[2048];	
-	recv(sockfd, recvbuf, sizeof(recvbuf), 0);
+	char recv_crt_buf[2048];	
+	recv(sockfd, recv_crt_buf, sizeof(recv_crt_buf), 0);
 	//crt 写入文件
 	FILE *fp;
     if((fp=fopen("app.crt","w"))==NULL)
         printf("file cannot open \n");
-	fputs(recvbuf, fp);
+	fputs(recv_crt_buf, fp);
 	fclose(fp);
-	printf("收到签名：%s", recvbuf);
+	printf("收到签名：%s", recv_crt_buf);
 
 	close(sockfd);
 	exit(EXIT_SUCCESS);
@@ -309,11 +322,10 @@ void key_to_pem(EVP_PKEY *key, uint8_t **key_bytes, size_t *key_size)
 	BIO_free_all(bio);
 }
 
-int load_ca(const char *ca_key_path, EVP_PKEY **ca_key, const char *ca_crt_path, X509 **ca_crt)
+int load_ca(const char *ca_crt_path, X509 **ca_crt)
 {
 	BIO *bio = NULL;
 	*ca_crt = NULL;
-	*ca_key = NULL;
 
 	/* Load CA public key. */
 	bio = BIO_new(BIO_s_file());
@@ -322,17 +334,10 @@ int load_ca(const char *ca_key_path, EVP_PKEY **ca_key, const char *ca_crt_path,
 	if (!*ca_crt) goto err;
 	BIO_free_all(bio);
 
-	/* Load CA private key. */
-	bio = BIO_new(BIO_s_file());
-	if (!BIO_read_filename(bio, ca_key_path)) goto err;
-	*ca_key = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
-	if (!ca_key) goto err;
-	BIO_free_all(bio);
 	return 1;
 err:
 	BIO_free_all(bio);
 	X509_free(*ca_crt);
-	EVP_PKEY_free(*ca_key);
 	return 0;
 }
 
@@ -354,5 +359,55 @@ void write_bytes(const char *path, uint8_t *data, size_t size)
 		// printf("%c", data[i]);
 		fputc(data[i],fp); //输入到文件中
 	}
+}
+//加密
+char *my_encrypt(char *str,char *path_key){
+    char *p_en;
+    RSA *p_rsa;
+    FILE *file;
+    int flen,rsa_len;
+    if((file=fopen(path_key,"r"))==NULL){
+        perror("open key file error");
+        return NULL;    
+    }   
+    if((p_rsa=PEM_read_RSA_PUBKEY(file,NULL,NULL,NULL))==NULL){
+    //if((p_rsa=PEM_read_RSAPublicKey(file,NULL,NULL,NULL))==NULL){   换成这句死活通不过，无论是否将公钥分离源文件
+        ERR_print_errors_fp(stdout);
+        return NULL;
+    }   
+    flen=strlen(str);
+    rsa_len=RSA_size(p_rsa);
+    p_en=(unsigned char *)malloc(rsa_len+1);
+    memset(p_en,0,rsa_len+1);
+    if(RSA_public_encrypt(rsa_len,(unsigned char *)str,(unsigned char*)p_en,p_rsa,RSA_NO_PADDING)<0){
+        return NULL;
+    }
+    RSA_free(p_rsa);
+    fclose(file);
+    return p_en;
+}
+// 解密
+char *my_decrypt(char *str,char *path_key){
+    char *p_de;
+    RSA *p_rsa;
+    FILE *file;
+    int rsa_len;
+    if((file=fopen(path_key,"r"))==NULL){
+        perror("open key file error");
+        return NULL;
+    }
+    if((p_rsa=PEM_read_RSAPrivateKey(file,NULL,NULL,NULL))==NULL){
+        ERR_print_errors_fp(stdout);
+        return NULL;
+    }
+    rsa_len=RSA_size(p_rsa);
+    p_de=(unsigned char *)malloc(rsa_len+1);
+    memset(p_de,0,rsa_len+1);
+    if(RSA_private_decrypt(rsa_len,(unsigned char *)str,(unsigned char*)p_de,p_rsa,RSA_NO_PADDING)<0){
+        return NULL;
+    }
+    RSA_free(p_rsa);
+    fclose(file);
+    return p_de;
 }
 
