@@ -35,8 +35,11 @@ static int generate_set_random_serial(X509 *crt);
 static int generate_signed_key_pair(EVP_PKEY *ca_key, X509 *ca_crt, X509_REQ **req, X509 **crt);
 static void initialize_crypto(void);
 static void key_to_pem(EVP_PKEY *key, uint8_t **key_bytes, size_t *key_size);
-static int load_ca(const char *ca_key_path, EVP_PKEY **ca_key, const char *ca_crt_path, X509 **ca_crt);
+static void pub_to_pem(EVP_PKEY *key, uint8_t **key_bytes, size_t *key_size);
+static int load_ca(const char *ca_key_path, EVP_PKEY **ca_key, const char *ca_pub_path, EVP_PKEY **ca_pub, const char *ca_crt_path, X509 **ca_crt);
 static void print_bytes(uint8_t *data, size_t size);
+static char *my_encrypt(char *str,char *path_key);
+static char *my_decrypt(char *str,char *path_key);
 
 int main(int argc, char **argv)
 {
@@ -48,12 +51,14 @@ int main(int argc, char **argv)
 
 	char *ca_key_path = argv[1];
 	char *ca_crt_path = argv[2];
+	char *ca_pub_path = "pubca.key";
 
 	/* Load CA key and cert. */
 	initialize_crypto();
 	EVP_PKEY *ca_key = NULL;
+	EVP_PKEY *ca_pub = NULL;
 	X509 *ca_crt = NULL;
-	if (!load_ca(ca_key_path, &ca_key, ca_crt_path, &ca_crt)) {
+	if (!load_ca(ca_key_path, &ca_key, ca_pub_path, &ca_pub, ca_crt_path, &ca_crt)) {
 		fprintf(stderr, "Failed to load CA certificate and/or key!\n");
 		return 1;
 	}
@@ -105,25 +110,34 @@ int main(int argc, char **argv)
 	//printf("new socket id is %d\n", newsockfd);
 	//printf("Accept clent ip is %s\n", inet_ntoa(client_addr.sin_addr));
 
-	//发送公钥(ca_crt)
-	uint8_t *ca_crt_bytes = NULL;
-	size_t ca_crt_size = 0;
-	crt_to_pem(ca_crt, &ca_crt_bytes, &ca_crt_size);
-	print_bytes(ca_crt_bytes, ca_crt_size);
+	//发送公钥(ca_pub)
+	uint8_t *ca_pub_bytes = NULL;
+	size_t ca_pub_size = 0;
+	pub_to_pem(ca_pub, &ca_pub_bytes, &ca_pub_size);
+	// print_bytes(ca_pub_bytes, ca_pub_size);
 
 	char sendfirstbuf[2048];
-	strcpy(sendfirstbuf, ca_crt_bytes);
+	strcpy(sendfirstbuf, ca_pub_bytes);
 	send(newsockfd, sendfirstbuf, strlen(sendfirstbuf), 0);
-	//接收证书请求
+	//接收证书请求的密文
 	char recvbuf[2048];	
 	recv(newsockfd, recvbuf, sizeof(recvbuf), 0);
+	// //对csr进行加密
+	// char *ca_pubkey = "pubca.key";
+	// char *encode_csr;
+	// encode_csr = my_encrypt(recvbuf, ca_pubkey);
+	// printf("收到证书请求：%s", encode_csr);
+	//使用私钥解密密文得到csr
+	char *ca_sk = "ca.key";
+	char *decode_csr;
+	decode_csr = my_decrypt(recvbuf, ca_sk);
+	printf("收到证书请求：%s", decode_csr);
 	//csr 写入文件
 	FILE *fp;
     if((fp=fopen("app.csr","w"))==NULL)
         printf("file cannot open \n");
 	fputs(recvbuf, fp);
 	fclose(fp);
-	printf("收到证书请求：%s", recvbuf);
 	//读取app.csr 得到X509_REQ
 	X509_REQ *req = NULL;
 	const char *x509ReqFile = "app.csr";
@@ -309,17 +323,36 @@ void key_to_pem(EVP_PKEY *key, uint8_t **key_bytes, size_t *key_size)
 	BIO_free_all(bio);
 }
 
-int load_ca(const char *ca_key_path, EVP_PKEY **ca_key, const char *ca_crt_path, X509 **ca_crt)
+void pub_to_pem(EVP_PKEY *key, uint8_t **key_bytes, size_t *key_size)
+{
+	/* Convert private key to PEM format. */
+	BIO *bio = BIO_new(BIO_s_mem());
+	PEM_write_bio_PUBKEY(bio, key);
+	*key_size = BIO_pending(bio);
+	*key_bytes = (uint8_t *)malloc(*key_size + 1);
+	BIO_read(bio, *key_bytes, *key_size);
+	BIO_free_all(bio);
+}
+
+int load_ca(const char *ca_key_path, EVP_PKEY **ca_key, const char *ca_pub_path, EVP_PKEY **ca_pub, const char *ca_crt_path, X509 **ca_crt)
 {
 	BIO *bio = NULL;
 	*ca_crt = NULL;
 	*ca_key = NULL;
+	*ca_pub = NULL;
 
 	/* Load CA public key. */
 	bio = BIO_new(BIO_s_file());
 	if (!BIO_read_filename(bio, ca_crt_path)) goto err;
 	*ca_crt = PEM_read_bio_X509(bio, NULL, NULL, NULL);
 	if (!*ca_crt) goto err;
+	BIO_free_all(bio);
+
+	/* Load CA real public key. */
+	bio = BIO_new(BIO_s_file());
+	if (!BIO_read_filename(bio, ca_pub_path)) goto err;
+	*ca_pub = PEM_read_bio_PUBKEY(bio, NULL, NULL, NULL);
+	if (!*ca_pub) goto err;
 	BIO_free_all(bio);
 
 	/* Load CA private key. */
@@ -343,3 +376,53 @@ void print_bytes(uint8_t *data, size_t size)
 	}
 }
 
+//加密
+char *my_encrypt(char *str,char *path_key){
+    char *p_en;
+    RSA *p_rsa;
+    FILE *file;
+    int flen,rsa_len;
+    if((file=fopen(path_key,"r"))==NULL){
+        perror("open key file error");
+        return NULL;    
+    }   
+    if((p_rsa=PEM_read_RSA_PUBKEY(file,NULL,NULL,NULL))==NULL){
+    //if((p_rsa=PEM_read_RSAPublicKey(file,NULL,NULL,NULL))==NULL){   换成这句死活通不过，无论是否将公钥分离源文件
+        ERR_print_errors_fp(stdout);
+        return NULL;
+    }   
+    flen=strlen(str);
+    rsa_len=RSA_size(p_rsa);
+    p_en=(unsigned char *)malloc(rsa_len+1);
+    memset(p_en,0,rsa_len+1);
+    if(RSA_public_encrypt(rsa_len,(unsigned char *)str,(unsigned char*)p_en,p_rsa,RSA_NO_PADDING)<0){
+        return NULL;
+    }
+    RSA_free(p_rsa);
+    fclose(file);
+    return p_en;
+}
+// 解密
+char *my_decrypt(char *str,char *path_key){
+    char *p_de;
+    RSA *p_rsa;
+    FILE *file;
+    int rsa_len;
+    if((file=fopen(path_key,"r"))==NULL){
+        perror("open key file error");
+        return NULL;
+    }
+    if((p_rsa=PEM_read_RSAPrivateKey(file,NULL,NULL,NULL))==NULL){
+        ERR_print_errors_fp(stdout);
+        return NULL;
+    }
+    rsa_len=RSA_size(p_rsa);
+    p_de=(unsigned char *)malloc(rsa_len+1);
+    memset(p_de,0,rsa_len+1);
+    if(RSA_private_decrypt(rsa_len,(unsigned char *)str,(unsigned char*)p_de,p_rsa,RSA_NO_PADDING)<0){
+        return NULL;
+    }
+    RSA_free(p_rsa);
+    fclose(file);
+    return p_de;
+}
