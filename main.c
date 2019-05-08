@@ -122,55 +122,53 @@ int main(int argc, char **argv)
 	//接收证书请求的密文
 	char recvbuf[2048];	
 	recv(newsockfd, recvbuf, sizeof(recvbuf), 0);
-	// //对csr进行加密
-	// char *ca_pubkey = "pubca.key";
-	// char *encode_csr;
-	// encode_csr = my_encrypt(recvbuf, ca_pubkey);
-	// printf("收到证书请求：%s", encode_csr);
+	printf("收到encode_id：%s", recvbuf);
 	//使用私钥解密密文得到csr
 	char *ca_sk = "ca.key";
-	char *decode_csr;
-	decode_csr = my_decrypt(recvbuf, ca_sk);
-	printf("收到证书请求：%s", decode_csr);
-	//csr 写入文件
-	FILE *fp;
-    if((fp=fopen("app.csr","w"))==NULL)
-        printf("file cannot open \n");
-	fputs(recvbuf, fp);
-	fclose(fp);
-	//读取app.csr 得到X509_REQ
-	X509_REQ *req = NULL;
-	const char *x509ReqFile = "app.csr";
-	BIO *in;
-	in = BIO_new_file(x509ReqFile, "r");
-	req = PEM_read_bio_X509_REQ(in, NULL, NULL, NULL);
-	BIO_free(in);
+	char *decode_id;
+	decode_id = my_decrypt(recvbuf, ca_sk);
+	printf("收到id：%s", decode_id);
+	
+	
+	// //csr 写入文件
+	// FILE *fp;
+    // if((fp=fopen("app.csr","w"))==NULL)
+    //     printf("file cannot open \n");
+	// fputs(recvbuf, fp);
+	// fclose(fp);
+	// //读取app.csr 得到X509_REQ
+	// X509_REQ *req = NULL;
+	// const char *x509ReqFile = "app.csr";
+	// BIO *in;
+	// in = BIO_new_file(x509ReqFile, "r");
+	// req = PEM_read_bio_X509_REQ(in, NULL, NULL, NULL);
+	// BIO_free(in);
 
-	uint8_t *req_bytes = NULL;
-	size_t req_size = 0;
-	req_to_pem(req, &req_bytes, &req_size);
-	print_bytes(req_bytes, req_size);
+	// uint8_t *req_bytes = NULL;
+	// size_t req_size = 0;
+	// req_to_pem(req, &req_bytes, &req_size);
+	// print_bytes(req_bytes, req_size);
 
-	X509 *crt = NULL;
-	int ret = generate_signed_key_pair(ca_key, ca_crt, &req, &crt);
-	if (!ret) {
-		fprintf(stderr, "Failed to generate key pair!\n");
-		return 1;
-	}
-	// /* Convert key and certificate to PEM format. */
-	uint8_t *crt_bytes = NULL;
-	size_t crt_size = 0;
-	crt_to_pem(crt, &crt_bytes, &crt_size);
-	print_bytes(crt_bytes, crt_size);
+	// X509 *crt = NULL;
+	// int ret = generate_signed_key_pair(ca_key, ca_crt, &req, &crt);
+	// if (!ret) {
+	// 	fprintf(stderr, "Failed to generate key pair!\n");
+	// 	return 1;
+	// }
+	// // /* Convert key and certificate to PEM format. */
+	// uint8_t *crt_bytes = NULL;
+	// size_t crt_size = 0;
+	// crt_to_pem(crt, &crt_bytes, &crt_size);
+	// print_bytes(crt_bytes, crt_size);
 
-	//发送签名证书
-	char sendsecondbuf[2048];
-	strcpy(sendsecondbuf, crt_bytes);
-	send(newsockfd, sendsecondbuf, strlen(sendsecondbuf), 0);	
+	// //发送签名证书
+	// char sendsecondbuf[2048];
+	// strcpy(sendsecondbuf, crt_bytes);
+	// send(newsockfd, sendsecondbuf, strlen(sendsecondbuf), 0);	
 	
 	close(newsockfd);
 	close(sockfd);
-	puts("注册成功");
+	// puts("注册成功");
 	exit(EXIT_SUCCESS);
 
 
