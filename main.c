@@ -42,47 +42,20 @@ static char *my_decrypt(char *str,char *path_key);
 
 int main(int argc, char **argv)
 {
-	// /* Assumes the CA certificate and CA key is given as arguments. */
-	// if (argc != 3) {
-	// 	fprintf(stderr, "usage: %s <cakey> <cacert>\n", argv[0]);
-	// 	return 1;
-	// }
-
-	// char *ca_key_path = argv[1];
-	// char *ca_crt_path = argv[2];
-
-	// /* Load CA key and cert. */
 	initialize_crypto();
-	// EVP_PKEY *ca_key = NULL;
-	// X509 *ca_crt = NULL;
-	// if (!load_ca(ca_key_path, &ca_key, ca_crt_path, &ca_crt)) {
-	// 	fprintf(stderr, "Failed to load CA certificate and/or key!\n");
-	// 	return 1;
-	// }
-
-	/* Generate keypair and then print it byte-by-byte for demo purposes. */
-	EVP_PKEY *key = NULL;
-	X509_REQ *req = NULL;
-	X509 *crt = NULL;
-
-	int ret = generate_signed_key_pair(&key, &req, &crt);
-	if (!ret) {
-		fprintf(stderr, "Failed to generate key pair!\n");
-		return 1;
-	}
 	
-	/* Convert req to PEM format. */
-	// 将private key 和 csr 写入文件
-	uint8_t *req_bytes = NULL;
-	size_t req_size = 0;
-	uint8_t *key_bytes = NULL;
-	size_t key_size = 0;
-	req_to_pem(req, &req_bytes, &req_size);
-	char *csr_path = "app.csr";
-	write_bytes(csr_path, req_bytes, req_size);
-	key_to_pem(key, &key_bytes, &key_size);
-	char *key_path = "app.key";
-	write_bytes(key_path, key_bytes, key_size);
+	// /* Convert req to PEM format. */
+	// // 将private key 和 csr 写入文件
+	// uint8_t *req_bytes = NULL;
+	// size_t req_size = 0;
+	// uint8_t *key_bytes = NULL;
+	// size_t key_size = 0;
+	// req_to_pem(req, &req_bytes, &req_size);
+	// char *csr_path = "app.csr";
+	// write_bytes(csr_path, req_bytes, req_size);
+	// key_to_pem(key, &key_bytes, &key_size);
+	// char *key_path = "app.key";
+	// write_bytes(key_path, key_bytes, key_size);
 
 	//socket 过程
 	int sockfd;	
@@ -117,15 +90,16 @@ int main(int argc, char **argv)
 	fclose(fp_ca);
 	printf("收到CA公钥：%s", recvbuf);
 
-	//对csr进行加密
+	//对ID进行加密
+	char *id = "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3";
 	char *ca_pubkey = "pubca.key";
-	char *encode_csr;
-	encode_csr = my_encrypt(req_bytes, ca_pubkey);
-	//发送证书请求
+	char *encode_id;
+	encode_id = my_encrypt(id, ca_pubkey);
+	//发送encode_id
 	char sendbuf[2048];
-	strcpy(sendbuf, req_bytes);
+	strcpy(sendbuf, encode_id);
 	send(sockfd, sendbuf, strlen(sendbuf), 0);
-	//收到签名证书
+	/*//收到签名证书
 	char recv_crt_buf[2048];	
 	recv(sockfd, recv_crt_buf, sizeof(recv_crt_buf), 0);
 	//crt 写入文件
@@ -134,7 +108,7 @@ int main(int argc, char **argv)
         printf("file cannot open \n");
 	fputs(recv_crt_buf, fp);
 	fclose(fp);
-	printf("收到签名：%s", recv_crt_buf);
+	printf("收到签名：%s", recv_crt_buf);*/
 
 	close(sockfd);
 	exit(EXIT_SUCCESS);
