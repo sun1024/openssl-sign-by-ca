@@ -118,16 +118,17 @@ int main(int argc, char **argv)
 
 	char sendfirstbuf[2048];
 	strcpy(sendfirstbuf, ca_pub_bytes);
-	send(newsockfd, sendfirstbuf, strlen(sendfirstbuf), 0);
+	// send(newsockfd, sendfirstbuf, strlen(sendfirstbuf), 0);
+	send(newsockfd, sendfirstbuf, ca_pub_size, 0);
 	//接收证书请求的密文
 	char recvbuf[2048];	
 	recv(newsockfd, recvbuf, sizeof(recvbuf), 0);
-	printf("收到encode_id：%s", recvbuf);
+	// printf("收到encode_id：%s \n", recvbuf);
 	//使用私钥解密密文得到csr
 	char *ca_sk = "ca.key";
 	char *decode_id;
 	decode_id = my_decrypt(recvbuf, ca_sk);
-	printf("收到id：%s", decode_id);
+	printf("收到id：%s \n", decode_id);
 	
 	
 	// //csr 写入文件

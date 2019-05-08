@@ -25,7 +25,7 @@ endif
 ifneq (,$(wildcard ca.key))
 	$(error ca.key does already exist. Issue make caclean if you want to remove it!)
 endif
-	openssl req -config openssl.conf -x509 -sha256 -nodes -extensions v3_ca -days 3650 -subj '/CN=OpenSSL CA/O=Example Company/C=SE' -newkey rsa:4096 -keyout ca.key -out ca.pem
+	openssl req -config openssl.conf -x509 -sha256 -nodes -extensions v3_ca -days 3650 -subj '/CN=OpenSSL CA/O=Example Company/C=SE' -newkey rsa:4096 -keyout ca.key -out ca.pem && openssl rsa -in ca.key -pubout -out pubca.key
 
 keystore.jks: ca.pem
 	keytool -import -file ca.pem -alias CA -keystore keystore.jks -noprompt -storepass $(KEYSTOREPASS)
